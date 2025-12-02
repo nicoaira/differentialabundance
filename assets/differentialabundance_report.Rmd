@@ -162,6 +162,7 @@ library(yaml)
 library(shinyngs)
 library(plotly)
 library(DT)
+library(limma)
 ```
 
 <!-- Define some functions -->
@@ -730,6 +731,159 @@ for (assay_type in rev(names(assay_data))){
         # Defaults in shinyngs make the text in this plot a bit big for the report, so
         # scale it down a bit
         print(p, vp=grid::viewport(gp=grid::gpar(cex=0.7)))
+        cat("\n")
+    }
+}
+```
+
+```{r, echo=FALSE, results='asis', warning=FALSE}
+# Add batch-corrected exploratory plots if blocking variables are present
+if (length(blocking_variables) > 0) {
+    cat("\n### Batch-corrected exploratory analysis\n")
+    cat("\nThe following plots show the variance-stabilised data after removing the effect of blocking factor(s) using `limma::removeBatchEffect()`. This is useful for visualisation purposes to assess whether samples cluster by biological variables of interest after accounting for technical variation.\n\n")
+    cat("**Note:** This batch correction is applied only for visualisation. The actual differential expression analysis accounts for batch effects through the model design formula. Plots colored by the blocking variable are included as a sanity check - samples should no longer cluster by this variable after correction.\n")
+}
+```
+
+```{r, echo=FALSE, results='asis', warning=FALSE}
+# Generate batch-corrected data and plots for each blocking variable
+if (length(blocking_variables) > 0) {
+    
+    # Get the variance-stabilised assay
+    vst_assay_name <- params$exploratory_final_assay
+    vst_matrix <- assay_data[[vst_assay_name]]
+    
+    for (block_var in blocking_variables) {
+        
+        cat(paste0("\n#### Corrected for: ", block_var, " {.tabset}\n"))
+        
+        # Create batch factor
+        batch_factor <- as.factor(observations[[block_var]])
+        
+        # Apply limma::removeBatchEffect
+        corrected_matrix <- limma::removeBatchEffect(vst_matrix, batch = batch_factor)
+        
+        # Run PCA on corrected data
+        pca_corrected <- compilePCAData(corrected_matrix)
+        
+        cat("\n##### PCA plots {.tabset}\n")
+        
+        # Generate PCA plots for each informative variable (including the blocking variable as a sanity check)
+        plot_variables <- informative_variables
+        
+        for (iv in plot_variables) {
+            
+            cat(paste0("\n###### ", iv, "\n"))
+            
+            plotdata <- pca_corrected$coords
+            plotdata$colorby <- factor(
+                observations[[iv]],
+                levels = unique(observations[[iv]])
+            )
+            pcaColorScale <- makeColorScale(length(unique(observations[[iv]])), palette = params$exploratory_palette_name)
+            
+            plotdata$name <- rownames(plotdata)
+            percentVar <- pca_corrected$percentVar
+            labels <- paste0(colnames(plotdata), " (", sprintf("%.1f", percentVar), "%)")
+            
+            plot_types <- list("2" = "scatter", "3" = "scatter3d")
+            
+            for (d in names(plot_types)) {
+                plot_args <- list(
+                    x = pca_corrected$coords[, 1],
+                    y = pca_corrected$coords[, 2],
+                    xlab = labels[1],
+                    ylab = labels[2],
+                    colorby = plotdata$colorby,
+                    plot_type = plot_types[[d]],
+                    palette = pcaColorScale,
+                    legend_title = prettifyVariablename(iv),
+                    labels = plotdata$name,
+                    show_labels = TRUE
+                )
+                
+                if (d == "3") {
+                    plot_args$z <- pca_corrected$coords[, 3]
+                    plot_args$zlab <- labels[3]
+                }
+                
+                print(htmltools::tagList(do.call("plotly_scatterplot", plot_args)))
+            }
+        }
+        
+        cat("\n##### Clustering dendrograms {.tabset}\n")
+        
+        # Generate dendrograms for each informative variable
+        for (iv in plot_variables) {
+            
+            cat(paste0("\n###### ", iv, "\n"))
+            
+            variable_genes <- selectVariableGenes(
+                matrix = corrected_matrix, 
+                ntop = ifelse(params$exploratory_n_features == -1, nrow(corrected_matrix), params$exploratory_n_features)
+            )
+            
+            dendroColorScale <- makeColorScale(length(unique(observations[[iv]])), palette = params$exploratory_palette_name)
+            
+            p <- clusteringDendrogram(
+                2^corrected_matrix[variable_genes, ],
+                observations[, iv, drop = FALSE],
+                colorby = iv,
+                cor_method = params$exploratory_cor_method,
+                plot_title = paste0(
+                    params$observations_type, " clustering dendrogram (", block_var, "-corrected)\n",
+                    ifelse(params$exploratory_n_features == -1, nrow(corrected_matrix), paste0(params$exploratory_n_features, " most variable")), " ",
+                    params$features_type, "s\n(",
+                    params$exploratory_clustering_method, " clustering, ", params$exploratory_cor_method, " correlation)"
+                ),
+                cluster_method = params$exploratory_clustering_method,
+                palette = dendroColorScale,
+                labelspace = 0.25
+            )
+            
+            print(p, vp=grid::viewport(gp=grid::gpar(cex=0.7)))
+            cat("\n")
+        }
+        
+        cat("\n##### PCA-metadata associations (batch-corrected)\n")
+        cat(paste0("\nANOVA test results for associations between principal components (after ", block_var, " correction) and metadata variables.\n\n"))
+        
+        # Calculate PCA vs metadata associations for corrected data
+        pca_vs_meta_corrected <- anova_pca_metadata(
+            pca_corrected$coords, 
+            observations[, plot_variables, drop = FALSE], 
+            pca_corrected$percentVar
+        )
+        
+        if (nrow(pca_vs_meta_corrected) == 1) {
+            plot_pca_meta_corrected <- rbind(pca_vs_meta_corrected, pca_vs_meta_corrected)
+        } else {
+            plot_pca_meta_corrected <- pca_vs_meta_corrected
+        }
+        
+        print(htmltools::tagList(
+            d3heatmap::d3heatmap(
+                -log10(plot_pca_meta_corrected),
+                Rowv = FALSE,
+                dendrogram = 'none',
+                cellnote = plot_pca_meta_corrected,
+                cexCol = 0.8,
+                cexRow = 0.8,
+                height = (100 + (15 * nrow(plot_pca_meta_corrected))),
+                colors = colorRampPalette(
+                    rev(RColorBrewer::brewer.pal(n = 7, name = "RdYlBu"))
+                )(100)
+            )
+        ))
+        
+        for (variable in rownames(pca_vs_meta_corrected)) {
+            sig_comps <- pca_vs_meta_corrected[variable, ] < 0.1
+            if (any(sig_comps)) {
+                min_sig_comp <- min(which(sig_comps))
+                min_sig_comp_p <- sprintf("%.2f", pca_vs_meta_corrected[variable, min_sig_comp])
+                cat(paste0('After ', block_var, ' correction, the variable \'', variable, '\' shows an association with ', colnames(pca_vs_meta_corrected)[min_sig_comp], ' (p = ', min_sig_comp_p, '). '))
+            }
+        }
         cat("\n")
     }
 }
