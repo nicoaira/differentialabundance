@@ -285,11 +285,20 @@ if (! 'id' %in% colnames(contrasts)){
     contrasts$id <- apply(contrasts, 1, paste, collapse='_')
 }
 
+# Get blocking variables that exist in observations
+blocking_variables <- unique(contrasts$blocking[contrasts$blocking != '' & contrasts$blocking %in% colnames(observations)])
+
+# Get the contrast variables from the design formula
+contrast_variables <- unique(contrasts$variable[contrasts$variable %in% colnames(observations)])
+
+# These are the variables we must always include (from the experimental design)
+design_variables <- unique(c(contrast_variables, blocking_variables))
+
 # Identify informative variables- those with a number of values greater than 1
 # but less than N, with N being the number of observations. Make sure contrast
-# variables are first in the list
+# variables and blocking variables are first in the list
 
-informative_variables <- unique(c(contrasts$variable, chooseGroupingVariables(observations)))
+informative_variables <- unique(c(design_variables, chooseGroupingVariables(observations)))
 
 # Remove any informative variables that group observations the same way
 informative_variables <- informative_variables[ ! duplicated(lapply(structure(informative_variables, names= informative_variables), function(x) as.numeric(factor(observations[[x]], levels=unique(observations[[x]])))))]
@@ -320,6 +329,13 @@ assay_data <- cond_log2_transform_assays(assay_data, log2_assays, prettify_names
 # Now we can rename the observations rows using the title field
 rownames(observations) <- observations[[observations_name_col]]
 
+# Ensure design variables are treated as factors (important for numeric-looking columns like batch)
+for (dv in design_variables) {
+    if (dv %in% colnames(observations)) {
+        observations[[dv]] <- as.factor(observations[[dv]])
+    }
+}
+
 # Run PCA early so we can understand how important each variable is
 pca_datas <- lapply(names(assay_data), function(assay_type){
     compilePCAData(assay_data[[assay_type]])
@@ -328,8 +344,9 @@ names(pca_datas) <- names(assay_data)
 
 pca_vs_meta <- anova_pca_metadata(pca_datas[[params$exploratory_final_assay]]$coords, observations[,informative_variables, drop = FALSE], pca_datas[[params$exploratory_final_assay]]$percentVar)
 
-# Show the variable with the tightest PC associations first
-informative_variables <- rownames(pca_vs_meta)[order(pca_vs_meta[,1])]
+# Show the variable with the tightest PC associations first, but always keep design variables
+anova_ordered_variables <- rownames(pca_vs_meta)[order(pca_vs_meta[,1])]
+informative_variables <- unique(c(design_variables, anova_ordered_variables))
 
 # Pick the variable used for coloring purposes etc
 if (params$exploratory_main_variable == 'contrasts'){

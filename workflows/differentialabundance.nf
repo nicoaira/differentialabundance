@@ -492,11 +492,15 @@ workflow DIFFERENTIALABUNDANCE {
     }
 
     // The exploratory plots are made by coloring by every unique variable used
-    // to define contrasts
+    // to define contrasts, including blocking variables
 
     ch_contrast_variables = ch_contrasts
-        .map{
-            [ "id": it[1] ]
+        .flatMap{
+            def variables = [[ "id": it[1] ]]
+            if (it[0].blocking && it[0].blocking != '') {
+                variables << [ "id": it[0].blocking ]
+            }
+            variables
         }
         .unique()
 
