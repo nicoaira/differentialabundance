@@ -707,13 +707,18 @@ for (variable in rownames(pca_vs_meta)){
 
 A hierarchical clustering of `r params$features_type`s was undertaken based on `r ifelse(params$exploratory_n_features == -1, paste0("all ", params$features_type), paste0("the ", params$exploratory_n_features, " most variable ", params$features_type))`s. Distances between `r params$features_type`s were estimated based on `r params$exploratory_cor_method` correlation, which were then used to produce a clustering via the `r params$exploratory_clustering_method` method with `hclust()` in R.
 
-```{r, echo=FALSE, results='asis'}
+```{r, echo=FALSE, results='asis', fig.height=12}
 for (assay_type in rev(names(assay_data))){
     for (iv in informative_variables){
         cat(paste0("\n##### ", prettifyVariablename(assay_type), " (", iv, ")\n"))
         variable_genes <- selectVariableGenes(matrix = assay_data[[assay_type]], ntop = ifelse(params$exploratory_n_features == -1, nrow(assay_data[[assay_type]]), params$exploratory_n_features))
 
         dendroColorScale <- makeColorScale(length(unique(observations[[iv]])), palette = params$exploratory_palette_name)
+        
+        # Calculate number of legend columns based on number of categories
+        n_categories <- length(unique(observations[[iv]]))
+        legend_ncol <- ceiling(n_categories / 10)  # Max ~10 items per column
+        
         p <- clusteringDendrogram(
         2^assay_data[[assay_type]][variable_genes, ],
         observations[, iv, drop = FALSE],
@@ -728,6 +733,12 @@ for (assay_type in rev(names(assay_data))){
         palette = dendroColorScale,
         labelspace = 0.25
         )
+        
+        # Modify the legend to use multiple columns if there are many categories
+        if (n_categories > 10) {
+            p <- p + ggplot2::guides(color = ggplot2::guide_legend(ncol = legend_ncol))
+        }
+        
         # Defaults in shinyngs make the text in this plot a bit big for the report, so
         # scale it down a bit
         print(p, vp=grid::viewport(gp=grid::gpar(cex=0.7)))
@@ -868,7 +879,7 @@ d3heatmap::d3heatmap(
 )
 ```
 
-```{r, echo=FALSE, results='asis', warning=FALSE}
+```{r, echo=FALSE, results='asis', warning=FALSE, fig.height=12}
 # Continue with the rest of the batch-corrected section
 if (length(blocking_variables) > 0) {
     vst_assay_name <- params$exploratory_final_assay
@@ -910,6 +921,10 @@ if (length(blocking_variables) > 0) {
             
             dendroColorScale <- makeColorScale(length(unique(observations[[iv]])), palette = params$exploratory_palette_name)
             
+            # Calculate number of legend columns based on number of categories
+            n_categories <- length(unique(observations[[iv]]))
+            legend_ncol <- ceiling(n_categories / 10)  # Max ~10 items per column
+            
             p <- clusteringDendrogram(
                 2^corrected_matrix[variable_genes, ],
                 observations[, iv, drop = FALSE],
@@ -926,6 +941,12 @@ if (length(blocking_variables) > 0) {
                 labelspace = 0.25
             )
             
+            # Modify the legend to use multiple columns if there are many categories
+            if (n_categories > 10) {
+                p <- p + ggplot2::guides(color = ggplot2::guide_legend(ncol = legend_ncol))
+            }
+            
+            # Scale down text a bit
             print(p, vp=grid::viewport(gp=grid::gpar(cex=0.7)))
             cat("\n")
         }
